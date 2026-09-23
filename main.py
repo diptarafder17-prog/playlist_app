@@ -5,7 +5,7 @@ from flask import Flask, jsonify, render_template, request
 app = Flask(__name__)
 PLAYLIST_FILE = 'playlist.json'
 
-# In-memory dictionary for O(1) lookups and zero-disk-read GET requests
+# In-memory dictionary for O(1) lookups and fast GET responses
 PLAYLIST_STORE = {}
 
 
@@ -17,7 +17,9 @@ def load_playlist_from_disk():
             with open(PLAYLIST_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if isinstance(data, list):
-                    PLAYLIST_STORE = {item['id']: item for item in data if 'id' in item}
+                    PLAYLIST_STORE = {
+                        item['id']: item for item in data if 'id' in item
+                    }
         except Exception as e:
             print(f"Error reading {PLAYLIST_FILE}: {e}")
             PLAYLIST_STORE = {}
@@ -29,7 +31,6 @@ def save_playlist_to_disk():
         temp_file = f"{PLAYLIST_FILE}.tmp"
         with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(list(PLAYLIST_STORE.values()), f, indent=4)
-        # Atomic replace prevents file corruption on crash
         os.replace(temp_file, PLAYLIST_FILE)
     except Exception as e:
         print(f"Error saving {PLAYLIST_FILE}: {e}")
@@ -47,7 +48,6 @@ def index():
 @app.route('/api/playlist', methods=['GET', 'POST', 'DELETE'])
 def handle_playlist():
     if request.method == 'GET':
-        # Instantly serve from RAM cache
         return jsonify(list(PLAYLIST_STORE.values()))
 
     elif request.method == 'POST':
@@ -57,7 +57,6 @@ def handle_playlist():
 
         track_id = str(item['id'])
 
-        # O(1) duplicate check
         if track_id not in PLAYLIST_STORE:
             PLAYLIST_STORE[track_id] = {
                 'id': track_id,
@@ -70,19 +69,24 @@ def handle_playlist():
             }
             save_playlist_to_disk()
 
-        return jsonify({'status': 'success', 'playlist': list(PLAYLIST_STORE.values())})
+        return jsonify({
+            'status': 'success',
+            'playlist': list(PLAYLIST_STORE.values())
+        })
 
     elif request.method == 'DELETE':
         track_id = request.args.get('id')
         if not track_id:
             return jsonify({'error': 'Missing track ID'}), 400
 
-        # O(1) deletion
         if track_id in PLAYLIST_STORE:
             del PLAYLIST_STORE[track_id]
             save_playlist_to_disk()
 
-        return jsonify({'status': 'success', 'playlist': list(PLAYLIST_STORE.values())})
+        return jsonify({
+            'status': 'success',
+            'playlist': list(PLAYLIST_STORE.values())
+        })
 
 
 @app.route('/api/tracks/<track_id>', methods=['GET'])
