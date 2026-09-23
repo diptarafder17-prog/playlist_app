@@ -1,0 +1,22 @@
+<distributionManagement>
+  <repository>
+    <id>github</id>
+    <name>GitHub Packages</name>
+    <url>https://maven.pkg.github.com/OWNER/REPOSITORY</url>
+  </repository>
+</distributionManagement>
+<repositories>mvn deploymvn install
+  <repository>
+    <id>github</id>
+    <url>https://maven.pkg.github.com/OWNER/REPOSITORY</url>
+  </repository>
+</repositories>
+
+<dependencies>
+  <dependency>
+    <groupId>com.example</groupId>
+    <artifactId>package-name</artifactId>
+    <version>1.0.0</version>
+  </dependency>
+</dependencies>
+
