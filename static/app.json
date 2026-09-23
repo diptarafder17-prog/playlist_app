@@ -1,0 +1,334 @@
+/* =========================================================
+   CYBER YT MUSIC PLAYER - COMPILED LOGIC (static/app.js)
+   ========================================================= */
+
+// ---------------------------------------------------------
+// GLOBAL STATE VARIABLES
+// ---------------------------------------------------------
+let ytPlayer = null;
+let currentPlaylist = [];
+let currentTrackId = null;
+
+// ---------------------------------------------------------
+// 1. YOUTUBE IFRAME API BINDINGS & CONTROLS
+// ---------------------------------------------------------
+
+// Automatically called by YouTube's script tag once loaded
+window.onYouTubeIframeAPIReady = function() {
+    ytPlayer = new YT.Player('playerContainer', {
+        height: '100%',
+        width: '100%',
+        videoId: '8ghwNVm4VjY', // Default starting video ID
+        playerVars: {
+            'autoplay': 0,
+            'controls': 1,
+            'modestbranding': 1,
+            'rel': 0
+        },
+        events: {
+            'onStateChange': onPlayerStateChange
+        }
+    });
+};
+
+// Player state handler
+function onPlayerStateChange(event) {
+    const playerCard = document.getElementById('playerCard');
+
+    // Dynamic class update for CSS glowing playing states
+    if (event.data === YT.PlayerState.PLAYING) {
+        if (playerCard) playerCard.classList.add('playing');
+    } else {
+        if (playerCard) playerCard.classList.remove('playing');
+    }
+
+    // Auto-play next track in playlist when video ends
+    if (event.data === YT.PlayerState.ENDED) {
+        playNextTrack();
+    }
+}
+
+// Toggle Play/Pause
+function togglePlayback() {
+    if (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function') return;
+    
+    const state = ytPlayer.getPlayerState();
+    if (state === YT.PlayerState.PLAYING) {
+        ytPlayer.pauseVideo();
+    } else {
+        ytPlayer.playVideo();
+    }
+}
+
+// Adjust Audio Volume
+function setAudioVolume(volumeLevel) {
+    if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
+        ytPlayer.setVolume(volumeLevel);
+    }
+}
+
+// Toggle Mute State
+function toggleMute() {
+    if (!ytPlayer || typeof ytPlayer.isMuted !== 'function') return;
+    
+    if (ytPlayer.isMuted()) {
+        ytPlayer.unMute();
+    } else {
+        ytPlayer.mute();
+    }
+}
+
+// Load Video by ID and Sync UI State
+function loadVideoById(videoId) {
+    if (!videoId) return;
+
+    currentTrackId = videoId;
+
+    if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
+        ytPlayer.loadVideoById(videoId);
+    }
+
+    updateActiveTrackUI(videoId);
+    fetchTrackWithUIState(videoId);
+}
+
+// Play Next Song in Playlist Queue
+function playNextTrack() {
+    if (!currentPlaylist.length || !currentTrackId) return;
+
+    const currentIndex = currentPlaylist.findIndex(t => t.id === currentTrackId);
+    if (currentIndex !== -1) {
+        const nextIndex = (currentIndex + 1) % currentPlaylist.length;
+        loadVideoById(currentPlaylist[nextIndex].id);
+    }
+}
+
+// ---------------------------------------------------------
+// 2. API & BACKEND COMMUNICATION (fetch requests)
+// ---------------------------------------------------------
+
+/**
+ * Fetches specific track details with complete error handling, 
+ * timeouts, and UI state management.
+ */
+async function fetchTrackWithUIState(trackId) {
+    const submitBtn = document.getElementById('submitBtn');
+    const spinner = document.getElementById('loadingSpinner');
+    const errorContainer = document.getElementById('errorMessage');
+
+    if (submitBtn) submitBtn.disabled = true;
+    if (spinner) spinner.classList.remove('hidden');
+    if (errorContainer) {
+        errorContainer.textContent = '';
+        errorContainer.classList.add('hidden');
+    }
+
+    // Setup Request Timeout (Abort after 8 seconds)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    try {
+        const response = await fetch(`/api/tracks/${encodeURIComponent(trackId)}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            signal: controller.signal
+        });
+
+        if (!response.ok) {
+            const errorPayload = await response.json().catch(() => null);
+            const serverMessage = errorPayload?.message || `Error ${response.status}: ${response.statusText}`;
+            throw new Error(serverMessage);
+        }
+
+        const data = await response.json();
+        renderTrackDetails(data);
+
+    } catch (error) {
+        let userMessage = 'An unexpected error occurred.';
+
+        if (error.name === 'AbortError') {
+            userMessage = 'Request timed out. Please check your internet connection.';
+        } else if (error instanceof TypeError) {
+            userMessage = 'Unable to reach the server. Network may be offline.';
+        } else {
+            userMessage = error.message;
+        }
+
+        if (errorContainer) {
+            errorContainer.textContent = userMessage;
+            errorContainer.classList.remove('hidden');
+        } else {
+            console.error(userMessage);
+        }
+
+    } finally {
+        clearTimeout(timeoutId);
+        if (submitBtn) submitBtn.disabled = false;
+        if (spinner) spinner.classList.add('hidden');
+    }
+}
+
+// GET: Retrieve playlist data from server
+async function loadPlaylistData() {
+    try {
+        const response = await fetch('/api/playlist');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        currentPlaylist = data; // Keep local memory synced
+        renderPlaylistItems(currentPlaylist);
+    } catch (error) {
+        console.error('Failed to retrieve playlist:', error);
+    }
+}
+
+// POST: Send JSON payload to server
+async function saveFavoriteTrack(trackData) {
+    try {
+        const response = await fetch('/api/playlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(trackData)
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => null);
+            throw new Error(errorData?.message || 'Failed to save track');
+        }
+
+        console.log('Track saved successfully');
+        loadPlaylistData(); // Re-sync playlist UI
+    } catch (error) {
+        console.error('Error saving track:', error);
+    }
+}
+
+// DELETE: Instruct backend to remove a resource
+async function deleteTrack(trackId) {
+    try {
+        const response = await fetch(`/api/playlist?id=${encodeURIComponent(trackId)}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to delete track');
+        }
+
+        loadPlaylistData(); // Refresh UI after deletion completes
+    } catch (error) {
+        console.error('Error deleting track:', error);
+    }
+}
+
+// ---------------------------------------------------------
+// 3. DOM & UI RENDERING
+// ---------------------------------------------------------
+
+// Updates now playing track title
+function updateNowPlayingUI(trackInfo) {
+    const titleEl = document.getElementById('trackTitle');
+    const cardEl = document.getElementById('playerCard');
+
+    if (titleEl) titleEl.textContent = trackInfo.title || 'Unknown Track';
+    if (cardEl) cardEl.classList.add('playing');
+}
+
+function renderTrackDetails(track) {
+    updateNowPlayingUI(track);
+}
+
+// Dynamically renders the playlist array into the DOM
+function renderPlaylistItems(items) {
+    const container = document.getElementById('playlistContainer');
+    if (!container) return;
+
+    if (!items || items.length === 0) {
+        container.innerHTML = '<p class="empty-msg">No tracks saved yet.</p>';
+        return;
+    }
+
+    container.innerHTML = items.map(item => `
+        <div class="playlist-item ${item.id === currentTrackId ? 'active' : ''}" data-id="${escapeHtml(item.id)}">
+            <span class="track-title">${escapeHtml(item.title)}</span>
+            <button class="delete-btn" data-action="delete" data-id="${escapeHtml(item.id)}">Remove</button>
+        </div>
+    `).join('');
+}
+
+// Highlight currently playing track in playlist list
+function updateActiveTrackUI(videoId) {
+    document.querySelectorAll('.playlist-item').forEach(item => {
+        if (item.dataset.id === videoId) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
+    });
+}
+
+// HTML escape helper to prevent XSS security issues
+function escapeHtml(text) {
+    if (!text) return '';
+    return String(text).replace(/[&<>"']/g, function(m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
+    });
+}
+
+// ---------------------------------------------------------
+// 4. EVENT LISTENERS & SHORTCUTS
+// ---------------------------------------------------------
+
+document.addEventListener('DOMContentLoaded', () => {
+    // 1. Play Button Click
+    const playBtn = document.getElementById('playBtn');
+    if (playBtn) {
+        playBtn.addEventListener('click', togglePlayback);
+    }
+
+    // 2. Volume Range Slider
+    const volumeSlider = document.getElementById('volumeSlider');
+    if (volumeSlider) {
+        volumeSlider.addEventListener('input', (e) => {
+            setAudioVolume(e.target.value);
+        });
+    }
+
+    // 3. Dynamic Playlist Event Delegation (Click track to play / Delete button)
+    const playlistContainer = document.getElementById('playlistContainer');
+    if (playlistContainer) {
+        playlistContainer.addEventListener('click', (e) => {
+            // Check if user clicked the "Remove" button
+            const deleteBtn = e.target.closest('[data-action="delete"]');
+            if (deleteBtn) {
+                e.stopPropagation(); // Prevents track playback
+                const idToDelete = deleteBtn.dataset.id;
+                deleteTrack(idToDelete);
+                return;
+            }
+
+            // Check if user clicked anywhere else on the track row
+            const trackItem = e.target.closest('.playlist-item');
+            if (trackItem) {
+                const videoId = trackItem.dataset.id;
+                loadVideoById(videoId);
+            }
+        });
+    }
+
+    // Load initial playlist state on startup
+    loadPlaylistData();
+});
+
+// 5. Global Keyboard Shortcuts
+document.addEventListener('keydown', (e) => {
+    // Ignore shortcuts when user is typing in input fields
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    if (e.code === 'Space') {
+        e.preventDefault(); // Stop page scroll on Spacebar
+        togglePlayback();
+    } else if (e.key === 'm' || e.key === 'M') {
+        toggleMute();
+    }
+});
